@@ -18,6 +18,10 @@ def construct_toric_code(L: int) -> List[nx.Graph]:
 	# on one side of the grid 
 	# NOTE that the physical qubits are situated at the EDGES, not vertices 
 	# The graph must have periodic boundary conditions
+	
+	# Using the NetworkX package here; allows us to generate an L x L lattice 
+	# with periodic boundary conditions. 
+	# See https://networkx.github.io/documentation/stable/reference/generated/networkx.generators.lattice.grid_2d_graph.html
 	primal_graph = nx.generators.lattice.grid_2d_graph(L, L, periodic=True) 
 	return primal_graph
 
