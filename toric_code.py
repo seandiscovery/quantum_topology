@@ -9,7 +9,7 @@ from typing import Tuple, List
 import networkx as nx
 import numpy as np
 from pyquil import Program
-from pyquil.gates import *
+from pyquil.gates import CNOT, H, MEASURE, X, Z
 from pyquil.quil import address_qubits
 from pyquil.quilatom import QubitPlaceholder
 from pyquil.api import QVMConnection
@@ -18,6 +18,8 @@ from pyquil.api import QVMConnection
 # Typing
 Node = Tuple[int]
 Edge = Tuple[Node]
+
+qvm = QVMConnection()
 
 
 def sort_edge(edge: Edge, L: int, mod: bool = True) -> Edge:
@@ -210,6 +212,17 @@ def mwpm(G: nx.Graph, distance_G: nx.Graph, L: int, errors: List[Node]) -> List[
     correction_paths = [paths[edge] for edge in matching]
     return correction_paths
 
+
+def apply_operation(paths: List[List[Edge]], G: nx.Graph, gate) -> Program:
+    '''Returns a program that applies a gate to every qubit in each path.
+    '''
+    pq = Program()
+    for path in paths:
+        for edge in path:  # each `edge` is the name of a qubit
+            qubit = G.edges[edge]['data_qubit']
+            pq += gate(qubit)
+    return pq
+
 ##### Syndrome Extraction #####
 
 def get_number() -> int:
@@ -281,25 +294,53 @@ def weighted_flip(p):
     else:
         return 0
 
-def toric_error_id(primal: nx.Graph, dual: nx.Graph, p=0.1, no_initialize=True) -> List[Tuple]:
-    """ Given the primal and dual graph of the code, applies an independent noise model
-    and performs syndrome extraction.
 
-    :param primal: nx.Graph object representing the primal lattice of the code
-    :param dual: nx.Graph object representing the dual lattice of the code
-    :param p: Probability of a bit/phase flip
-    :param no_initialize: If "False", run syndrome extraction as an initialization step; 
-    that is, don't apply any errors and just run syndrome extraction on the ground state |0...0> 
-    :returns: List of nodes in the primal (dual) graph where a -1 eigenvalue was identified
-    """
-    primal_pq = Program()
-    dual_pq = Program()
-    qvm = QVMConnection()
+def syndrome_extraction(G: nx.Graph, pq: Program, op: str) -> List[Node]:
+    '''
+    Args
+    - G: graph
+    - pq: Program
+    - op: str, one of ['X', 'Z']
 
-    if no_initialize:
+    Returns
+    - faulty_nodes: list of nodes, representing plaquette or vertex operators
+        that measured a -1 eigenvalue
+    '''
+    assert op in ['X', 'Z']
+
+    faulty_nodes = []
+    for node in G.nodes:  # each node is a plaquette or vertex operator
+        neighbors = G.edges(node)  # qubits that the operator acts on
+
+        # Extract the necessary qubits
+        qubits = [G.nodes[node]["ancilla_qubit"]]
+        for edge in neighbors:
+            qubits.append(G.edges[edge]["data_qubit"])
+
+        if op == 'X':
+            syndrome = pq + X_syndrome_extraction(qubits)
+        else:
+            syndrome = pq + Z_syndrome_extraction(qubits)
+        syndrome = address_qubits(syndrome)
+        result = qvm.run(syndrome)
+        if result[0][0]:
+            # Error detected
+            faulty_nodes.append(node)
+
+    return faulty_nodes
+
+def simulate_error(primal: nx.Graph, dual: nx.Graph, p=None, phase_flips=None, bit_flips=None):
+    if p is None:
+        assert phase_flips is not None
+        assert bit_flips is not None
+    else:
         # Randomly choose which qubits will have bit/phase flip errors
         # Working under the independent noise model; since the toric code is a CSS code,
         # we can analyze bit and phase flip errors seperately
+
+        assert phase_flips is None
+        assert bit_flips is None
+
         phase_flips = set()
         for edge in primal.edges:
             if weighted_flip(p):
@@ -309,46 +350,65 @@ def toric_error_id(primal: nx.Graph, dual: nx.Graph, p=0.1, no_initialize=True) 
             if weighted_flip(p):
                 bit_flips.add(edge)
 
-        # Apply the errors we selected above to the necessary qubits 
-        for p_edge in primal.edges: 
-            if p_edge in phase_flips:
-                primal_pq += Z(primal.edges[p_edge]["data_qubit"])
-        for d_edge in dual.edges:
-            if d_edge in bit_flips:
-                dual_pq += X(dual.edges[d_edge]["data_qubit"])
+    primal_pq = Program()
+    dual_pq = Program()
 
-    primal_faulty_nodes = []
-    dual_faulty_nodes = []
+    # Apply the errors we selected above to the necessary qubits
+    for p_edge in primal.edges:
+        if p_edge in phase_flips:
+            primal_pq += Z(primal.edges[p_edge]['data_qubit'])
+    for d_edge in dual.edges:
+        if d_edge in bit_flips:
+            dual_pq += X(dual.edges[d_edge]['data_qubit'])
 
-    ### Syndrome Extraction ###
-    for p_node in primal.nodes:
-        p_neighbors = primal.edges(nbunch=p_node)
+    return primal_pq, phase_flips, dual_pq, bit_flips
 
-        # Extract the necessary qubits
-        p_qubits = [primal.nodes[p_node]["ancilla_qubit"]]
-        for edge in p_neighbors:
-            p_qubits.append(primal.edges[edge]["data_qubit"])
 
-        syndrome = primal_pq + X_syndrome_extraction(p_qubits)
-        syndrome = address_qubits(syndrome)
-        result = qvm.run(syndrome)
-        if result[0][0]:
-            # Error detected
-            primal_faulty_nodes.append(p_node)
+def measure_all_qubits(G, pq):
+    num_qubits = len(G.edges)
 
-    for d_node in dual.nodes:
-        d_neighbors = dual.edges(nbunch=d_node)
+    ro = pq.declare('ro', 'BIT', num_qubits)
+    edge_list = list(G.edges)
+    for i, edge in enumerate(edge_list):  # sort for determinism
+        pq += MEASURE(G.edges[edge]['data_qubit'], ro[i])
+    result = qvm.run(pq)[0]
+    for edge, bit in zip(edge_list, result):
+        G.edges[edge]['value'] = bit
 
-        # Extract the necessary qubits
-        d_qubits = [dual.nodes[d_node]["ancilla_qubit"]]
-        for edge in d_neighbors:
-            d_qubits.append(dual.edges[edge]["data_qubit"])
 
-        syndrome = dual_pq + Z_syndrome_extraction(d_qubits)
-        syndrome = address_qubits(syndrome)
-        result = qvm.run(syndrome)
-        if result[0][0]:
-            # Error detected
-            dual_faulty_nodes.append(d_node)
+def main():
+    L = 5
+    p = 0.05
+    primal_G, dual_G, distance_G = construct_toric_code(L)
 
-    return primal_faulty_nodes, dual_faulty_nodes
+    # generate programs that initialize qubits to valid codeword
+    empty_pq = Program()
+    primal_faulty_nodes = syndrome_extraction(G=primal_G, pq=empty_pq, op='X')
+    dual_faulty_nodes = syndrome_extraction(G=dual_G, pq=empty_pq, op='Z')
+
+    correction_paths = mwpm(primal_G, distance_G, L=L, errors=primal_faulty_nodes)
+    primal_pq = apply_operation(paths=correction_paths, G=primal_G, op=X)
+
+    correction_paths = mwpm(dual_G, distance_G, L=L, errors=dual_faulty_nodes)
+    dual_pq = apply_operation(paths=correction_paths, G=dual_G, op=Z)
+
+    # apply noise to qubits
+    primal_error_pq, phase_flips, dual_error_pq, bit_flips = simulate_error(primal_G, dual_G, p)
+    primal_pq += primal_error_pq
+    dual_pq += dual_error_pq
+
+    # determining faulty nodes for error correction
+    primal_faulty_nodes = syndrome_extraction(G=primal_G, pq=primal_pq, op='X')
+    dual_faulty_nodes = syndrome_extraction(G=dual_G, pq=dual_pq, op='Z')
+
+    correction_paths = mwpm(primal_G, distance_G, L=L, errors=primal_faulty_nodes)
+    primal_pq += apply_operation(paths=correction_paths, G=primal_G, op=X)
+
+    correction_paths = mwpm(dual_G, distance_G, L=L, errors=dual_faulty_nodes)
+    dual_pq += apply_operation(paths=correction_paths, G=dual_G, op=Z)
+
+    # add measurement operators to validate error correction
+    measure_all_qubits(primal_G, primal_pq)
+    measure_all_qubits(dual_G, dual_pq)
+
+    # @RICHARD: TODO
