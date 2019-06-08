@@ -81,7 +81,7 @@ def sort_edge(edge: Edge, L: int, mod: bool = True) -> Edge:
 
 
 def dual_edge_to_primal_edge(dual_edge: Edge, L: int) -> Edge:
-	"""Converts an edge from the dual graph to an edge in the primal graph."""
+    """Converts an edge from the dual graph to an edge in the primal graph."""
     (n1, n2) = sort_edge(dual_edge, L, mod=False)
     (n1_r, n1_c) = n1
     (n2_r, n2_c) = n2
@@ -147,7 +147,7 @@ def construct_toric_code(L: int) -> Tuple[nx.Graph]:
 
 
 def operator_distance(G: nx.Graph, distance_G: nx.Graph, L: int, o1: Node,
-                      o2: Node) -> int, List[Edge]:
+                      o2: Node):
     '''
     Args
     - G: nx.Graph
@@ -182,8 +182,7 @@ def operator_distance(G: nx.Graph, distance_G: nx.Graph, L: int, o1: Node,
     return shortest_pathlen, shortest_path
 
 
-def mwpm(G: nx.Graph, distance_G: nx.Graph, L: int, errors: List[Node])
-    -> List[List[Edge]]:
+def mwpm(G: nx.Graph, distance_G: nx.Graph, L: int, errors: List[Node]) -> List[List[Edge]]:
     '''
     Args
     - G: nx.Graph, edges are qubits
@@ -282,42 +281,41 @@ def weighted_flip(p):
     else:
         return 0
 
-def toric_error_id(primal: nx.Graph, dual: nx.Graph, p=0.1) -> List[Tuple]:
+def toric_error_id(primal: nx.Graph, dual: nx.Graph, p=0.1, no_initialize=True) -> List[Tuple]:
     """ Given the primal and dual graph of the code, applies an independent noise model
     and performs syndrome extraction.
 
     :param primal: nx.Graph object representing the primal lattice of the code
     :param dual: nx.Graph object representing the dual lattice of the code
     :param p: Probability of a bit/phase flip
+    :param no_initialize: If "False", run syndrome extraction as an initialization step; 
+    that is, don't apply any errors and just run syndrome extraction on the ground state |0...0> 
     :returns: List of nodes in the primal (dual) graph where a -1 eigenvalue was identified
     """
     primal_pq = Program()
     dual_pq = Program()
     qvm = QVMConnection()
 
-    # First, we randomly choose which qubits will have bit/phase flip errors
-    # Working under the independent noise model; since the toric code is a CSS code,
-    # we can analyze bit and phase flip errors seperately
-    phase_flips = set()
-    for edge in primal.edges:
-        if weighted_flip(p):
-            phase_flips.add(edge)
-    bit_flips = set()
-    for edge in dual.edges:
-        if weighted_flip(p):
-            bit_flips.add(edge)
+    if no_initialize:
+        # Randomly choose which qubits will have bit/phase flip errors
+        # Working under the independent noise model; since the toric code is a CSS code,
+        # we can analyze bit and phase flip errors seperately
+        phase_flips = set()
+        for edge in primal.edges:
+            if weighted_flip(p):
+                phase_flips.add(edge)
+        bit_flips = set()
+        for edge in dual.edges:
+            if weighted_flip(p):
+                bit_flips.add(edge)
 
-    # Second, we entangle the qubits in the graph such that they are in a +1 eigenstate of
-    # the code's stabilizer generators
-    # Assume these are initialized correctly, for now
-
-    # Third, apply the errors we selected above to the necessary qubits
-    for p_edge in primal.edges:
-        if p_edge in phase_flips:
-            primal_pq += Z(primal.edges[p_edge]["data_qubit"])
-    for d_edge in dual.edges:
-        if d_edge in bit_flips:
-            dual_pq += X(dual.edges[d_edge]["data_qubit"])
+        # Apply the errors we selected above to the necessary qubits 
+        for p_edge in primal.edges: 
+            if p_edge in phase_flips:
+                primal_pq += Z(primal.edges[p_edge]["data_qubit"])
+        for d_edge in dual.edges:
+            if d_edge in bit_flips:
+                dual_pq += X(dual.edges[d_edge]["data_qubit"])
 
     primal_faulty_nodes = []
     dual_faulty_nodes = []
