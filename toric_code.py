@@ -295,10 +295,16 @@ def weighted_flip(p):
         return 0
 
 
-def syndrome_extraction(G: nx.Graph, pq: Program, op: str) -> List[Node]:
+def nwes(node, L):
+    raise NotImplementedError
+    r, c = node
+    N = ((r-1)%L, c)
+
+def syndrome_extraction(G: nx.Graph, L: int, pq: Program, op: str) -> List[Node]:
     '''
     Args
     - G: graph
+    - L: int
     - pq: Program
     - op: str, one of ['X', 'Z']
 
@@ -310,7 +316,8 @@ def syndrome_extraction(G: nx.Graph, pq: Program, op: str) -> List[Node]:
 
     faulty_nodes = []
     for node in G.nodes:  # each node is a plaquette or vertex operator
-        neighbors = G.edges(node)  # qubits that the operator acts on
+        neighbors = sorted(G.edges(node))  # qubits that the operator acts on
+        print(neighbors)
 
         # Extract the necessary qubits
         qubits = [G.nodes[node]["ancilla_qubit"]]
@@ -371,26 +378,33 @@ def measure_all_qubits(G, pq):
     edge_list = list(G.edges)
     for i, edge in enumerate(edge_list):  # sort for determinism
         pq += MEASURE(G.edges[edge]['data_qubit'], ro[i])
+    pq = address_qubits(pq)
     result = qvm.run(pq)[0]
     for edge, bit in zip(edge_list, result):
         G.edges[edge]['value'] = bit
 
 
 def main():
-    L = 5
+    L = 3
     p = 0.05
     primal_G, dual_G, distance_G = construct_toric_code(L)
 
     # generate programs that initialize qubits to valid codeword
     empty_pq = Program()
     primal_faulty_nodes = syndrome_extraction(G=primal_G, pq=empty_pq, op='X')
-    dual_faulty_nodes = syndrome_extraction(G=dual_G, pq=empty_pq, op='Z')
+    # dual_faulty_nodes = syndrome_extraction(G=dual_G, pq=empty_pq, op='Z')
+    print(primal_faulty_nodes)
 
     correction_paths = mwpm(primal_G, distance_G, L=L, errors=primal_faulty_nodes)
-    primal_pq = apply_operation(paths=correction_paths, G=primal_G, op=X)
+    primal_pq = apply_operation(paths=correction_paths, G=primal_G, gate=X)
 
-    correction_paths = mwpm(dual_G, distance_G, L=L, errors=dual_faulty_nodes)
-    dual_pq = apply_operation(paths=correction_paths, G=dual_G, op=Z)
+    # correction_paths = mwpm(dual_G, distance_G, L=L, errors=dual_faulty_nodes)
+    # dual_pq = apply_operation(paths=correction_paths, G=dual_G, gate=Z)
+
+    measure_all_qubits(primal_G, primal_pq)
+    # measure_all_qubits(dual_G, dual_pq)
+    ascii_print(primal_G, L)
+    return
 
     # apply noise to qubits
     primal_error_pq, phase_flips, dual_error_pq, bit_flips = simulate_error(primal_G, dual_G, p)
@@ -402,13 +416,46 @@ def main():
     dual_faulty_nodes = syndrome_extraction(G=dual_G, pq=dual_pq, op='Z')
 
     correction_paths = mwpm(primal_G, distance_G, L=L, errors=primal_faulty_nodes)
-    primal_pq += apply_operation(paths=correction_paths, G=primal_G, op=X)
+    primal_pq += apply_operation(paths=correction_paths, G=primal_G, gate=X)
 
     correction_paths = mwpm(dual_G, distance_G, L=L, errors=dual_faulty_nodes)
-    dual_pq += apply_operation(paths=correction_paths, G=dual_G, op=Z)
+    dual_pq += apply_operation(paths=correction_paths, G=dual_G, gate=Z)
 
     # add measurement operators to validate error correction
     measure_all_qubits(primal_G, primal_pq)
     measure_all_qubits(dual_G, dual_pq)
 
+    ascii_print(primal_G, L)
+
     # @RICHARD: TODO
+
+
+def ascii_print(G: nx.Graph, L: int):
+    '''
+    Args
+    - G: nx.Graph, where each edge has a 'value' field
+    '''
+    # does not show the wrap-around row
+    x = np.zeros([2*L, 2*L], dtype=object)
+
+    # all of the row qubits
+    for r in range(L):
+        for c in range(L):
+            x[2*r, 2*c] = '+'
+            x[2*r + 1, 2*c + 1] = '+'
+
+            n1 = (r, c)
+            n2 = (r, (c+1) % L)
+            edge = (n1, n2)
+            x[2*r, 2*c + 1] = str(G.edges[edge]['value'])
+
+            n1 = (r, c)
+            n2 = ((r+1) % L, c)
+            edge = (n1, n2)
+            x[2*r + 1, 2*c] = str(G.edges[edge]['value'])
+
+    s = [''.join(list(row)) for row in x]
+    s = '\n'.join(s)
+    print(s)
+
+main()
