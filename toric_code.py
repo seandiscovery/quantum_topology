@@ -395,19 +395,19 @@ def main():
     # generate programs that initialize qubits to valid codeword
     empty_pq = Program()
     primal_faulty_nodes = syndrome_extraction(G=primal_G, L=L, pq=empty_pq, op='X')
-    # dual_faulty_nodes = syndrome_extraction(G=dual_G, pq=empty_pq, op='Z')
+    dual_faulty_nodes = syndrome_extraction(G=dual_G, L=L, pq=empty_pq, op='Z')
     print(primal_faulty_nodes)
 
     correction_paths = mwpm(primal_G, distance_G, L=L, errors=primal_faulty_nodes)
     primal_pq = apply_operation(paths=correction_paths, G=primal_G, gate=X)
 
-    # correction_paths = mwpm(dual_G, distance_G, L=L, errors=dual_faulty_nodes)
-    # dual_pq = apply_operation(paths=correction_paths, G=dual_G, gate=Z)
+    correction_paths = mwpm(dual_G, distance_G, L=L, errors=dual_faulty_nodes)
+    dual_pq = apply_operation(paths=correction_paths, G=dual_G, gate=Z)
 
     measure_all_qubits(primal_G, primal_pq)
-    # measure_all_qubits(dual_G, dual_pq)
+    measure_all_qubits(dual_G, dual_pq)
+
     ascii_print(primal_G, L)
-    return
 
     # apply noise to qubits
     primal_error_pq, phase_flips, dual_error_pq, bit_flips = simulate_error(primal_G, dual_G, p)
@@ -429,8 +429,6 @@ def main():
     measure_all_qubits(dual_G, dual_pq)
 
     ascii_print(primal_G, L)
-
-    # @RICHARD: TODO
 
 
 def ascii_print(G: nx.Graph, L: int):
