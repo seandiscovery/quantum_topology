@@ -230,7 +230,7 @@ def get_number() -> int:
 
     :returns: Random integer in range (0, 1e10); chance of collision = 1e(-20)
     """
-    return np.random.randint(0, 1e10)
+    return np.random.randint(0, 2**30)
 
 def X_syndrome_extraction(primal_qubits: List[QubitPlaceholder]) -> Program:
     """ Runs the syndrome extraction circuit for the X-stabilizers.
@@ -296,9 +296,12 @@ def weighted_flip(p):
 
 
 def nwes(node, L):
-    raise NotImplementedError
     r, c = node
-    N = ((r-1)%L, c)
+    N = (((r-1)%L, c), node)
+    W = ((r, (c-1)%L), node)
+    E = (node, (r, (c+1)%L))
+    S = (node, ((r+1)%L, c))
+    return [N, W, E, S]
 
 def syndrome_extraction(G: nx.Graph, L: int, pq: Program, op: str) -> List[Node]:
     '''
@@ -316,8 +319,8 @@ def syndrome_extraction(G: nx.Graph, L: int, pq: Program, op: str) -> List[Node]
 
     faulty_nodes = []
     for node in G.nodes:  # each node is a plaquette or vertex operator
-        neighbors = sorted(G.edges(node))  # qubits that the operator acts on
-        print(neighbors)
+        # neighbors = sorted(G.edges(node))  # qubits that the operator acts on
+        neighbors = nwes(node, L)
 
         # Extract the necessary qubits
         qubits = [G.nodes[node]["ancilla_qubit"]]
@@ -391,7 +394,7 @@ def main():
 
     # generate programs that initialize qubits to valid codeword
     empty_pq = Program()
-    primal_faulty_nodes = syndrome_extraction(G=primal_G, pq=empty_pq, op='X')
+    primal_faulty_nodes = syndrome_extraction(G=primal_G, L=L, pq=empty_pq, op='X')
     # dual_faulty_nodes = syndrome_extraction(G=dual_G, pq=empty_pq, op='Z')
     print(primal_faulty_nodes)
 
@@ -442,7 +445,7 @@ def ascii_print(G: nx.Graph, L: int):
     for r in range(L):
         for c in range(L):
             x[2*r, 2*c] = '+'
-            x[2*r + 1, 2*c + 1] = '+'
+            x[2*r + 1, 2*c + 1] = '.'
 
             n1 = (r, c)
             n2 = (r, (c+1) % L)
@@ -454,7 +457,7 @@ def ascii_print(G: nx.Graph, L: int):
             edge = (n1, n2)
             x[2*r + 1, 2*c] = str(G.edges[edge]['value'])
 
-    s = [''.join(list(row)) for row in x]
+    s = [' '.join(list(row)) for row in x]
     s = '\n'.join(s)
     print(s)
 
