@@ -301,6 +301,7 @@ def syndrome_extraction(G: nx.Graph, L: int, pq: Program, op: str) -> List[Node]
     - L: int
     - pq: Program
     - op: str, one of ['X', 'Z']
+
     Returns
     - faulty_nodes: list of nodes, representing plaquette or vertex operators
         that measured a -1 eigenvalue
