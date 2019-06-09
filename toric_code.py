@@ -9,7 +9,7 @@ from typing import Tuple, List
 import networkx as nx
 import numpy as np
 from pyquil import Program
-from pyquil.gates import *
+from pyquil.gates import CNOT, H, MEASURE, X, Z
 from pyquil.quil import address_qubits
 from pyquil.quilatom import QubitPlaceholder
 from pyquil.api import QVMConnection
@@ -19,16 +19,16 @@ from pyquil.api import QVMConnection
 Node = Tuple[int]
 Edge = Tuple[Node]
 
+qvm = QVMConnection()
+
 
 def sort_edge(edge: Edge, L: int, mod: bool = True) -> Edge:
     '''Verifies that the given edge (n1, n2) is valid and orients the edge such
     that n2 is always east or south of n1.
-
     Args
     - edge: tuple of (n1, n2), where n1 and n2 each are tuples (r, c)
     - L: int, size of grid with periodic boundary conditions
     - mod: whether to return the edge with coordinates modulo L
-
     Returns
     - edge: same as edge, except n2 is always east or south of n1
     '''
@@ -109,7 +109,6 @@ def dual_edge_to_primal_edge(dual_edge: Edge, L: int) -> Edge:
 
 def construct_toric_code(L: int) -> Tuple[nx.Graph]:
     """ Constructs a toric code as a NetworkX graph structure.
-
     :param L: Number of physical qubits on one side of the square lattice
     :returns: Primal graph and dual graph, and distance graph (for the MWPM algorithm)
     """
@@ -153,7 +152,6 @@ def operator_distance(G: nx.Graph, distance_G: nx.Graph, L: int, o1: Node,
     - G: nx.Graph
     - distance_G: nx.Graph
     - o1/o2: tuple (r, c), vertex in graph G representing an operator
-
     Returns
     - shortest_pathlen: int, number of qubits between the 2 operators
     - shortest_path: list of edges (qubits)
@@ -188,7 +186,6 @@ def mwpm(G: nx.Graph, distance_G: nx.Graph, L: int, errors: List[Node]) -> List[
     - G: nx.Graph, edges are qubits
     - distance_G: nx.Graph
     - errors: list of vertices (operators) in G where errors were observed
-
     Returns
     - correction_paths: list of paths, each path is a list of edges in G
     '''
@@ -206,28 +203,35 @@ def mwpm(G: nx.Graph, distance_G: nx.Graph, L: int, errors: List[Node]) -> List[
             paths[(o2, o1)] = path[::-1]
 
     matching = nx.max_weight_matching(mwpm_G, maxcardinality=True)
-    assert nx.is_perfect_matching(mwpm_G, matching)
+    assert nx.matching.is_perfect_matching(mwpm_G, matching)
     correction_paths = [paths[edge] for edge in matching]
     return correction_paths
+
+
+def apply_operation(paths: List[List[Edge]], G: nx.Graph, gate) -> Program:
+    '''Returns a program that applies a gate to every qubit in each path.
+    '''
+    pq = Program()
+    for path in paths:
+        for edge in path:  # each `edge` is the name of a qubit
+            qubit = G.edges[edge]['data_qubit']
+            pq += gate(qubit)
+    return pq
 
 ##### Syndrome Extraction #####
 
 def get_number() -> int:
     """ Generate unique memory ids for the X and Z syndrome extraction functions.
-
     :returns: Random integer in range (0, 1e10); chance of collision = 1e(-20)
     """
-    return np.random.randint(0, 1e10)
+    return np.random.randint(0, 2**30)
 
 def X_syndrome_extraction(primal_qubits: List[QubitPlaceholder]) -> Program:
     """ Runs the syndrome extraction circuit for the X-stabilizers.
     Detects phase-flip errors on the lattice.
-
     :param primal_qubits: List of ancilla and data qubits for the extraction.
     We assume the following input format:
-
             qubits = [ancilla, north, west, east, south]
-
     where "ancilla" is the ancilla qubit on the vertex of the primal graph,
     and "north", ... "south" are the data qubits to the north, ... south of
     the ancilla qubit. Note that we assume the ancilla is initialized to ancilla = |0>.
@@ -250,7 +254,6 @@ def X_syndrome_extraction(primal_qubits: List[QubitPlaceholder]) -> Program:
 def Z_syndrome_extraction(dual_qubits: List[QubitPlaceholder]) -> Program:
     """ Runs the syndrome extraction circuit for the Z-stabilizers.
     Detects bit-flip errors on the lattice.
-
     :param dual_qubits: List of ancilla and data qubits for the extraction.
     Assumed to have an identical format to the "primal_qubits" parameter
     in "X_syndrome_extraction" above. Note that the ancilla qubits live on the
@@ -271,7 +274,6 @@ def Z_syndrome_extraction(dual_qubits: List[QubitPlaceholder]) -> Program:
 def weighted_flip(p):
     """ Flips a weighted coin; heads (0) with probability
     1 - p, tails (1) with probability p.
-
     :param p: Probability of tails (1)
     :returns: 0 for tails/failure, 1 for heads/success
     """
@@ -281,25 +283,64 @@ def weighted_flip(p):
     else:
         return 0
 
-def toric_error_id(primal: nx.Graph, dual: nx.Graph, p=0.1, no_initialize=True) -> List[Tuple]:
-    """ Given the primal and dual graph of the code, applies an independent noise model
-    and performs syndrome extraction.
-
-    :param primal: nx.Graph object representing the primal lattice of the code
-    :param dual: nx.Graph object representing the dual lattice of the code
-    :param p: Probability of a bit/phase flip
-    :param no_initialize: If "False", run syndrome extraction as an initialization step; 
-    that is, don't apply any errors and just run syndrome extraction on the ground state |0...0> 
-    :returns: List of nodes in the primal (dual) graph where a -1 eigenvalue was identified
+def nwes(node, L):
+    """ Ensures that the edges from a node are returned in the order 
+    north, west, east, south for syndrome extraction.  
     """
-    primal_pq = Program()
-    dual_pq = Program()
-    qvm = QVMConnection()
+    r, c = node
+    N = (((r-1)%L, c), node)
+    W = ((r, (c-1)%L), node)
+    E = (node, (r, (c+1)%L))
+    S = (node, ((r+1)%L, c))
+    return [N, W, E, S]
 
-    if no_initialize:
+def syndrome_extraction(G: nx.Graph, L: int, pq: Program, op: str) -> List[Node]:
+    '''
+    Args
+    - G: graph
+    - L: int
+    - pq: Program
+    - op: str, one of ['X', 'Z']
+    Returns
+    - faulty_nodes: list of nodes, representing plaquette or vertex operators
+        that measured a -1 eigenvalue
+    '''
+    assert op in ['X', 'Z']
+
+    faulty_nodes = []
+    for node in G.nodes:  # each node is a plaquette or vertex operator
+        # neighbors = sorted(G.edges(node))  # qubits that the operator acts on
+        neighbors = nwes(node, L)
+
+        # Extract the necessary qubits
+        qubits = [G.nodes[node]["ancilla_qubit"]]
+        for edge in neighbors:
+            qubits.append(G.edges[edge]["data_qubit"])
+
+        if op == 'X':
+            syndrome = pq + X_syndrome_extraction(qubits)
+        else:
+            syndrome = pq + Z_syndrome_extraction(qubits)
+        syndrome = address_qubits(syndrome)
+        result = qvm.run(syndrome)
+        if result[0][0]:
+            # Error detected
+            faulty_nodes.append(node)
+
+    return faulty_nodes
+
+def simulate_error(primal: nx.Graph, dual: nx.Graph, p=None, phase_flips=None, bit_flips=None):
+    if p is None:
+        assert phase_flips is not None
+        assert bit_flips is not None
+    else:
         # Randomly choose which qubits will have bit/phase flip errors
         # Working under the independent noise model; since the toric code is a CSS code,
         # we can analyze bit and phase flip errors seperately
+
+        assert phase_flips is None
+        assert bit_flips is None
+
         phase_flips = set()
         for edge in primal.edges:
             if weighted_flip(p):
@@ -309,46 +350,103 @@ def toric_error_id(primal: nx.Graph, dual: nx.Graph, p=0.1, no_initialize=True) 
             if weighted_flip(p):
                 bit_flips.add(edge)
 
-        # Apply the errors we selected above to the necessary qubits 
-        for p_edge in primal.edges: 
-            if p_edge in phase_flips:
-                primal_pq += Z(primal.edges[p_edge]["data_qubit"])
-        for d_edge in dual.edges:
-            if d_edge in bit_flips:
-                dual_pq += X(dual.edges[d_edge]["data_qubit"])
+    primal_pq = Program()
+    dual_pq = Program()
 
-    primal_faulty_nodes = []
-    dual_faulty_nodes = []
+    # Apply the errors we selected above to the necessary qubits
+    for p_edge in primal.edges:
+        if p_edge in phase_flips:
+            primal_pq += Z(primal.edges[p_edge]['data_qubit'])
+    for d_edge in dual.edges:
+        if d_edge in bit_flips:
+            dual_pq += X(dual.edges[d_edge]['data_qubit'])
 
-    ### Syndrome Extraction ###
-    for p_node in primal.nodes:
-        p_neighbors = primal.edges(nbunch=p_node)
+    return primal_pq, phase_flips, dual_pq, bit_flips
 
-        # Extract the necessary qubits
-        p_qubits = [primal.nodes[p_node]["ancilla_qubit"]]
-        for edge in p_neighbors:
-            p_qubits.append(primal.edges[edge]["data_qubit"])
 
-        syndrome = primal_pq + X_syndrome_extraction(p_qubits)
-        syndrome = address_qubits(syndrome)
-        result = qvm.run(syndrome)
-        if result[0][0]:
-            # Error detected
-            primal_faulty_nodes.append(p_node)
+def measure_all_qubits(G, pq):
+    num_qubits = len(G.edges)
 
-    for d_node in dual.nodes:
-        d_neighbors = dual.edges(nbunch=d_node)
+    ro = pq.declare('ro', 'BIT', num_qubits)
+    edge_list = list(G.edges)
+    for i, edge in enumerate(edge_list):  # sort for determinism
+        pq += MEASURE(G.edges[edge]['data_qubit'], ro[i])
+    pq = address_qubits(pq)
+    result = qvm.run(pq)[0]
+    for edge, bit in zip(edge_list, result):
+        G.edges[edge]['value'] = bit
 
-        # Extract the necessary qubits
-        d_qubits = [dual.nodes[d_node]["ancilla_qubit"]]
-        for edge in d_neighbors:
-            d_qubits.append(dual.edges[edge]["data_qubit"])
 
-        syndrome = dual_pq + Z_syndrome_extraction(d_qubits)
-        syndrome = address_qubits(syndrome)
-        result = qvm.run(syndrome)
-        if result[0][0]:
-            # Error detected
-            dual_faulty_nodes.append(d_node)
+def main():
+    L = 3
+    p = 0.05
+    primal_G, dual_G, distance_G = construct_toric_code(L)
 
-    return primal_faulty_nodes, dual_faulty_nodes
+    # generate programs that initialize qubits to valid codeword
+    empty_pq = Program()
+    primal_faulty_nodes = syndrome_extraction(G=primal_G, L=L, pq=empty_pq, op='X')
+    dual_faulty_nodes = syndrome_extraction(G=dual_G, L=L, pq=empty_pq, op='Z')
+    print(primal_faulty_nodes)
+
+    correction_paths = mwpm(primal_G, distance_G, L=L, errors=primal_faulty_nodes)
+    primal_pq = apply_operation(paths=correction_paths, G=primal_G, gate=X)
+
+    correction_paths = mwpm(dual_G, distance_G, L=L, errors=dual_faulty_nodes)
+    dual_pq = apply_operation(paths=correction_paths, G=dual_G, gate=Z)
+
+    measure_all_qubits(primal_G, primal_pq)
+    measure_all_qubits(dual_G, dual_pq)
+
+    ascii_print(primal_G, L)
+
+    # apply noise to qubits
+    primal_error_pq, phase_flips, dual_error_pq, bit_flips = simulate_error(primal_G, dual_G, p)
+    primal_pq += primal_error_pq
+    dual_pq += dual_error_pq
+
+    # determining faulty nodes for error correction
+    primal_faulty_nodes = syndrome_extraction(G=primal_G, pq=primal_pq, op='X')
+    dual_faulty_nodes = syndrome_extraction(G=dual_G, pq=dual_pq, op='Z')
+
+    correction_paths = mwpm(primal_G, distance_G, L=L, errors=primal_faulty_nodes)
+    primal_pq += apply_operation(paths=correction_paths, G=primal_G, gate=X)
+
+    correction_paths = mwpm(dual_G, distance_G, L=L, errors=dual_faulty_nodes)
+    dual_pq += apply_operation(paths=correction_paths, G=dual_G, gate=Z)
+
+    # add measurement operators to validate error correction
+    measure_all_qubits(primal_G, primal_pq)
+    measure_all_qubits(dual_G, dual_pq)
+
+    ascii_print(primal_G, L)
+
+
+def ascii_print(G: nx.Graph, L: int):
+    '''
+    Args
+    - G: nx.Graph, where each edge has a 'value' field
+    '''
+    # does not show the wrap-around row
+    x = np.zeros([2*L, 2*L], dtype=object)
+
+    # all of the row qubits
+    for r in range(L):
+        for c in range(L):
+            x[2*r, 2*c] = '+'
+            x[2*r + 1, 2*c + 1] = '.'
+
+            n1 = (r, c)
+            n2 = (r, (c+1) % L)
+            edge = (n1, n2)
+            x[2*r, 2*c + 1] = str(G.edges[edge]['value'])
+
+            n1 = (r, c)
+            n2 = ((r+1) % L, c)
+            edge = (n1, n2)
+            x[2*r + 1, 2*c] = str(G.edges[edge]['value'])
+
+    s = [' '.join(list(row)) for row in x]
+    s = '\n'.join(s)
+    print(s)
+
+main()
