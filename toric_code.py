@@ -203,7 +203,7 @@ def mwpm(G: nx.Graph, distance_G: nx.Graph, L: int, errors: List[Node]) -> List[
             paths[(o2, o1)] = path[::-1]
 
     matching = nx.max_weight_matching(mwpm_G, maxcardinality=True)
-    assert nx.matching.is_perfect_matching(mwpm_G, matching)
+    assert nx.is_perfect_matching(mwpm_G, matching)
     correction_paths = [paths[edge] for edge in matching]
     return correction_paths
 
@@ -331,6 +331,17 @@ def syndrome_extraction(G: nx.Graph, L: int, pq: Program, op: str) -> List[Node]
     return faulty_nodes
 
 def simulate_error(primal: nx.Graph, dual: nx.Graph, p=None, phase_flips=None, bit_flips=None):
+    """ Given a code defined by a primal and dual graph, applies noise under the independent 
+    noise model. 
+
+    :param primal: Primal graph of the code 
+    :param dual: Dual graph of the code 
+    :param p: Probability with which to apply bit and phase flips 
+    :param phase_flips, bit_flips: Lists of edges to apply bit/phase flips to, if working 
+    in a deterministic setting (in this case p should be set to None)
+    :returns: Program for primal and dual graphs representing the applied errors, and lists 
+    of edges for each graph detailing where phase and bit flips were applied for debugging 
+    """
     if p is None:
         assert phase_flips is not None
         assert bit_flips is not None
@@ -376,7 +387,6 @@ def measure_all_qubits(G, pq):
     result = qvm.run(pq)[0]
     for edge, bit in zip(edge_list, result):
         G.edges[edge]['value'] = bit
-
 
 def main():
     L = 3
@@ -450,4 +460,5 @@ def ascii_print(G: nx.Graph, L: int):
     s = '\n'.join(s)
     print(s)
 
-main()
+if __name__ == "__main__": 
+    main() 
