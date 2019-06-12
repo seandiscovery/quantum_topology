@@ -1,8 +1,10 @@
 """
-An implementation of A. Kitaev's toric code (https://arxiv.org/pdf/quant-ph/9707021.pdf).
 Final project for CS269Q at Stanford University.
 Authors: Richard Mu, Sean Mullane, and Chris Yeh
 (c) 2019
+
+An implementation of A. Kitaev's toric code
+    https://arxiv.org/pdf/quant-ph/9707021.pdf
 """
 from typing import Tuple, List
 
@@ -25,10 +27,12 @@ qvm = QVMConnection()
 def sort_edge(edge: Edge, L: int, mod: bool = True) -> Edge:
     '''Verifies that the given edge (n1, n2) is valid and orients the edge such
     that n2 is always east or south of n1.
+
     Args
     - edge: tuple of (n1, n2), where n1 and n2 each are tuples (r, c)
     - L: int, size of grid with periodic boundary conditions
     - mod: whether to return the edge with coordinates modulo L
+
     Returns
     - edge: same as edge, except n2 is always east or south of n1
     '''
@@ -108,15 +112,19 @@ def dual_edge_to_primal_edge(dual_edge: Edge, L: int) -> Edge:
 
 
 def construct_toric_code(L: int) -> Tuple[nx.Graph]:
-    """ Constructs a toric code as a NetworkX graph structure.
-    :param L: Number of physical qubits on one side of the square lattice
-    :returns: Primal graph and dual graph, and distance graph (for the MWPM algorithm)
-    """
-    # Using the NetworkX package; allows us to generate an L x L lattice
-    # with periodic boundary conditions. See:
-    # https://networkx.github.io/documentation/stable/reference/generated/networkx.generators.lattice.grid_2d_graph.html
-    primal_graph = nx.generators.lattice.grid_2d_graph(L, L, periodic=True)
+    '''Constructs a toric code as a NetworkX graph structure.
 
+    Args
+    - L: int, # of physical qubits on one side of the square lattice
+
+    Returns
+    - primal_graph: nx.Graph, L x L lattice
+    - dual_graph: nx.Graph, L x L lattice
+    - distance_graph: nx.Graph, nodes are primal_graph edges (qubits), edges
+        indicate adjacency between those qubits, needed for MWPM algorithm
+    '''
+    # Generate a L x L lattice with periodic boundary conditions
+    primal_graph = nx.generators.lattice.grid_2d_graph(L, L, periodic=True)
     for edge in primal_graph.edges:
         # Add data qubits to edges
         primal_graph.edges[edge]['data_qubit'] = QubitPlaceholder()
@@ -137,7 +145,8 @@ def construct_toric_code(L: int) -> Tuple[nx.Graph]:
         distance_graph.nodes[edge]['data_qubit'] = primal_graph.edges[edge]['data_qubit']
     for n1 in distance_graph.nodes:
         for n2 in distance_graph.nodes:
-            if n1 == n2: continue
+            if n1 == n2:
+                continue
 
             if (n1[0] == n2[0]) or (n1[0] == n2[1]) or (n1[1] == n2[0]) or (n1[1] == n2[1]):
                 distance_graph.add_edge(n1, n2)
@@ -152,6 +161,7 @@ def operator_distance(G: nx.Graph, distance_G: nx.Graph, L: int, o1: Node,
     - G: nx.Graph
     - distance_G: nx.Graph
     - o1/o2: tuple (r, c), vertex in graph G representing an operator
+
     Returns
     - shortest_pathlen: int, number of qubits between the 2 operators
     - shortest_path: list of edges (qubits)
@@ -186,6 +196,7 @@ def mwpm(G: nx.Graph, distance_G: nx.Graph, L: int, errors: List[Node]) -> List[
     - G: nx.Graph, edges are qubits
     - distance_G: nx.Graph
     - errors: list of vertices (operators) in G where errors were observed
+
     Returns
     - correction_paths: list of paths, each path is a list of edges in G
     '''
@@ -195,7 +206,8 @@ def mwpm(G: nx.Graph, distance_G: nx.Graph, L: int, errors: List[Node]) -> List[
     paths = {}
     for o1 in errors:
         for o2 in errors:
-            if o1 == o2: continue
+            if o1 == o2:
+                continue
 
             nqubits, path = operator_distance(G, distance_G, L, o1, o2)
             mwpm_G.add_edge(o1, o2, weight=1/nqubits)
@@ -209,8 +221,7 @@ def mwpm(G: nx.Graph, distance_G: nx.Graph, L: int, errors: List[Node]) -> List[
 
 
 def apply_operation(paths: List[List[Edge]], G: nx.Graph, gate) -> Program:
-    '''Returns a program that applies a gate to every qubit in each path.
-    '''
+    '''Returns a program that applies a gate to every qubit in each path.'''
     pq = Program()
     for path in paths:
         for edge in path:  # each `edge` is the name of a qubit
@@ -218,27 +229,29 @@ def apply_operation(paths: List[List[Edge]], G: nx.Graph, gate) -> Program:
             pq += gate(qubit)
     return pq
 
-##### Syndrome Extraction #####
 
 def get_number() -> int:
-    """ Generate unique memory ids for the X and Z syndrome extraction functions.
+    '''Generate unique memory ids for X and Z syndrome extraction functions.
+
     :returns: Random integer in range (0, 1e10); chance of collision = 1e(-20)
-    """
+    '''
     return np.random.randint(0, 2**30)
+
 
 def X_syndrome_extraction(primal_qubits: List[QubitPlaceholder]) -> Program:
     """ Runs the syndrome extraction circuit for the X-stabilizers.
     Detects phase-flip errors on the lattice.
+
     :param primal_qubits: List of ancilla and data qubits for the extraction.
     We assume the following input format:
             qubits = [ancilla, north, west, east, south]
     where "ancilla" is the ancilla qubit on the vertex of the primal graph,
     and "north", ... "south" are the data qubits to the north, ... south of
-    the ancilla qubit. Note that we assume the ancilla is initialized to ancilla = |0>.
+    the ancilla qubit. We assume the ancilla is initialized to |0>.
     :returns: Pyquil Program representing the syndrome extraction process
     """
     pq = Program()
-    ro_X = pq.declare('ro', 'BIT', 1) # Do we need to avoid namespace conflicts here?
+    ro_X = pq.declare('ro', 'BIT', 1)  # Do we need to avoid namespace conflicts here?
 
     # Initialize the ancilla
     pq += H(primal_qubits[0])
@@ -251,14 +264,16 @@ def X_syndrome_extraction(primal_qubits: List[QubitPlaceholder]) -> Program:
 
     return pq
 
+
 def Z_syndrome_extraction(dual_qubits: List[QubitPlaceholder]) -> Program:
     """ Runs the syndrome extraction circuit for the Z-stabilizers.
     Detects bit-flip errors on the lattice.
+
     :param dual_qubits: List of ancilla and data qubits for the extraction.
     Assumed to have an identical format to the "primal_qubits" parameter
     in "X_syndrome_extraction" above. Note that the ancilla qubits live on the
-    nodes of the dual graph (plaquette faces of the primal graph). Also note that
-    we assume the ancilla is initialized to ancilla = |0>.
+    nodes of the dual graph (plaquette faces of the primal graph). Also
+    we assume the ancilla is initialized to |0>.
     :returns: +/- 1 to indicate whether an error has been detected
     """
     pq = Program()
@@ -271,9 +286,11 @@ def Z_syndrome_extraction(dual_qubits: List[QubitPlaceholder]) -> Program:
     pq += MEASURE(dual_qubits[0], ro_Z[0])
     return pq
 
-def weighted_flip(p):
+
+def weighted_flip(p: float) -> int:
     """ Flips a weighted coin; heads (0) with probability
     1 - p, tails (1) with probability p.
+
     :param p: Probability of tails (1)
     :returns: 0 for tails/failure, 1 for heads/success
     """
@@ -283,16 +300,18 @@ def weighted_flip(p):
     else:
         return 0
 
-def nwes(node, L):
-    """ Ensures that the edges from a node are returned in the order 
-    north, west, east, south for syndrome extraction.  
+
+def nwes(node: Node, L: int) -> List[Edge]:
+    """Returns the edges of a given node in north, west, east, south order,
+    for syndrome extraction.
     """
     r, c = node
-    N = (((r-1)%L, c), node)
-    W = ((r, (c-1)%L), node)
-    E = (node, (r, (c+1)%L))
-    S = (node, ((r+1)%L, c))
+    N = (((r-1) % L, c), node)
+    W = ((r, (c-1) % L), node)
+    E = (node, (r, (c+1) % L))
+    S = (node, ((r+1) % L, c))
     return [N, W, E, S]
+
 
 def syndrome_extraction(G: nx.Graph, L: int, pq: Program, op: str) -> List[Node]:
     '''
@@ -330,25 +349,28 @@ def syndrome_extraction(G: nx.Graph, L: int, pq: Program, op: str) -> List[Node]
 
     return faulty_nodes
 
-def simulate_error(primal: nx.Graph, dual: nx.Graph, p=None, phase_flips=None, bit_flips=None):
-    """ Given a code defined by a primal and dual graph, applies noise under the independent 
-    noise model. 
 
-    :param primal: Primal graph of the code 
-    :param dual: Dual graph of the code 
-    :param p: Probability with which to apply bit and phase flips 
-    :param phase_flips, bit_flips: Lists of edges to apply bit/phase flips to, if working 
-    in a deterministic setting (in this case p should be set to None)
-    :returns: Program for primal and dual graphs representing the applied errors, and lists 
-    of edges for each graph detailing where phase and bit flips were applied for debugging 
-    """
+def simulate_error(primal: nx.Graph, dual: nx.Graph, p=None, phase_flips=None,
+                   bit_flips=None):
+    '''Given a code defined by a primal and dual graph, applies noise under the
+    independent noise model.
+
+    :param primal: Primal graph of the code
+    :param dual: Dual graph of the code
+    :param p: Probability with which to apply bit and phase flips
+    :param phase_flips, bit_flips: Lists of edges to apply bit/phase flips to,
+        if working in a deterministic setting (in this case, set p=None)
+    :returns: Program for primal and dual graphs representing the applied
+        errors, and lists of edges for each graph where phase and bit flips
+        were applied for debugging
+    '''
     if p is None:
         assert phase_flips is not None
         assert bit_flips is not None
     else:
         # Randomly choose which qubits will have bit/phase flip errors
-        # Working under the independent noise model; since the toric code is a CSS code,
-        # we can analyze bit and phase flip errors seperately
+        # Working under the independent noise model; since the toric code is a
+        # CSS code, we can analyze bit and phase flip errors seperately
 
         assert phase_flips is None
         assert bit_flips is None
@@ -376,7 +398,7 @@ def simulate_error(primal: nx.Graph, dual: nx.Graph, p=None, phase_flips=None, b
     return primal_pq, phase_flips, dual_pq, bit_flips
 
 
-def measure_all_qubits(G, pq):
+def measure_all_qubits(G: nx.Graph, pq: Program):
     num_qubits = len(G.edges)
 
     ro = pq.declare('ro', 'BIT', num_qubits)
@@ -388,21 +410,62 @@ def measure_all_qubits(G, pq):
     for edge, bit in zip(edge_list, result):
         G.edges[edge]['value'] = bit
 
+
+def validate_error_correction(error_edges: List[Edge],
+                              correction_edges: List[Edge],
+                              L: int):
+    G = nx.Graph()
+    G.add_edges_from(error_edges)
+    for correction_edge in correction_edges:
+        n1, n2 = correction_edge
+        if G.has_edge(n1, n2):
+            G.remove_edge(n1, n2)
+        else:
+            G.add_edge(n1, n2)
+    total_num_edges = len(G.edges)
+    cycles = nx.cycle_basis(G)
+    count_edges = 0
+    for cycle in cycles:
+        count_edges += len(cycle)
+    if count_edges != total_num_edges:
+        return False
+    for cycle in cycles:
+        x_set = set()
+        y_set = set()
+        for edge in cycle:
+            n1, n2 = edge
+            x1, y1 = n1
+            x2, y2 = n2
+            if x1 < x2:
+                x_set.add((x1, x2))
+            elif x1 > x2:
+                x_set.add((x2, x1))
+            if y1 < y2:
+                y_set.add((y1, y2))
+            elif y1 > y2:
+                y_set.add((y2, y1))
+        if len(x_set) == L:
+            return False
+        if len(y_set) == L:
+            return False
+    return True
+
+
 def main():
-    L = 3
+    L = 2
     p = 0.05
     primal_G, dual_G, distance_G = construct_toric_code(L)
 
     # generate programs that initialize qubits to valid codeword
     empty_pq = Program()
-    primal_faulty_nodes = syndrome_extraction(G=primal_G, L=L, pq=empty_pq, op='X')
-    dual_faulty_nodes = syndrome_extraction(G=dual_G, L=L, pq=empty_pq, op='Z')
+    primal_faulty_nodes = syndrome_extraction(primal_G, L, pq=empty_pq, op='X')
+    dual_faulty_nodes = syndrome_extraction(dual_G, L, pq=empty_pq, op='Z')
     print(primal_faulty_nodes)
 
-    correction_paths = mwpm(primal_G, distance_G, L=L, errors=primal_faulty_nodes)
+    correction_paths = mwpm(primal_G, distance_G, L, errors=primal_faulty_nodes)
     primal_pq = apply_operation(paths=correction_paths, G=primal_G, gate=X)
 
-    correction_paths = mwpm(dual_G, distance_G, L=L, errors=dual_faulty_nodes)
+    correction_paths = mwpm(dual_G, distance_G, L, errors=dual_faulty_nodes)
     dual_pq = apply_operation(paths=correction_paths, G=dual_G, gate=Z)
 
     measure_all_qubits(primal_G, primal_pq)
@@ -411,18 +474,19 @@ def main():
     ascii_print(primal_G, L)
 
     # apply noise to qubits
-    primal_error_pq, phase_flips, dual_error_pq, bit_flips = simulate_error(primal_G, dual_G, p)
+    primal_error_pq, phase_flips, dual_error_pq, bit_flips = simulate_error(
+        primal_G, dual_G, p)
     primal_pq += primal_error_pq
     dual_pq += dual_error_pq
 
     # determining faulty nodes for error correction
-    primal_faulty_nodes = syndrome_extraction(G=primal_G, pq=primal_pq, op='X')
-    dual_faulty_nodes = syndrome_extraction(G=dual_G, pq=dual_pq, op='Z')
+    primal_faulty_nodes = syndrome_extraction(primal_G, pq=primal_pq, op='X')
+    dual_faulty_nodes = syndrome_extraction(dual_G, pq=dual_pq, op='Z')
 
-    correction_paths = mwpm(primal_G, distance_G, L=L, errors=primal_faulty_nodes)
+    correction_paths = mwpm(primal_G, distance_G, L, errors=primal_faulty_nodes)
     primal_pq += apply_operation(paths=correction_paths, G=primal_G, gate=X)
 
-    correction_paths = mwpm(dual_G, distance_G, L=L, errors=dual_faulty_nodes)
+    correction_paths = mwpm(dual_G, distance_G, L, errors=dual_faulty_nodes)
     dual_pq += apply_operation(paths=correction_paths, G=dual_G, gate=Z)
 
     # add measurement operators to validate error correction
@@ -433,9 +497,14 @@ def main():
 
 
 def ascii_print(G: nx.Graph, L: int):
-    '''
+    '''Prints out a graph in ASCII
+    - vertices are represented by '+'
+    - plaquettes are represented by '.'
+    - qubits are shown with their value
+
     Args
-    - G: nx.Graph, where each edge has a 'value' field
+    - G: nx.Graph, where each edge (qubit) has a 'value' field
+    - L: int
     '''
     # does not show the wrap-around row
     x = np.zeros([2*L, 2*L], dtype=object)
@@ -460,5 +529,6 @@ def ascii_print(G: nx.Graph, L: int):
     s = '\n'.join(s)
     print(s)
 
-if __name__ == "__main__": 
-    main() 
+
+if __name__ == "__main__":
+    main()
