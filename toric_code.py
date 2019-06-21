@@ -11,7 +11,7 @@ from typing import Tuple, List
 import networkx as nx
 import numpy as np
 from pyquil import Program
-from pyquil.gates import CNOT, H, MEASURE, X, Z
+from pyquil.gates import CNOT, H, MEASURE, X, Z, RESET 
 from pyquil.quil import address_qubits
 from pyquil.quilatom import QubitPlaceholder
 from pyquil.api import QVMConnection
@@ -152,6 +152,39 @@ def construct_toric_code(L: int) -> Tuple[nx.Graph]:
                 distance_graph.add_edge(n1, n2)
 
     return primal_graph, dual_graph, distance_graph
+
+def initialize_toric_code(primal: nx.Graph, dual: nx.Graph, distance: nx.Graph, L: int, trials=100) -> Program: 
+    """ Initializes the toric code into an appropriate eigenstate of the stabilizers, assuming 
+    the qubits begin in the state |0> \tensor |0> \tensor ... \tensor |0> before initialization. 
+
+    :param primal, dual, distance: primal/dual/distance graphs returned by construct_toric_code 
+    :param L: number of physical qubits on one side of the lattice 
+    :param trials: number of trials to obtain an even number of qubit errors 
+    :returns: program representing correction operation 
+    """
+    # A hacky way to ensure the initialization works: 
+    # run the syndrome extraction until we return an even 
+    # number of errors (okay for small graphs)
+    for t in range(trials):
+        # Set up programs, and reset qubits if needed 
+        primal_initial = Program() + RESET()
+        # Perform syndrome extraction on primal and dual graphs 
+        primal_faulty_nodes = syndrome_extraction(primal, L, primal_initial, "X")
+        test = (len(primal_faulty_nodes) % 2 == 0) 
+        if test: 
+            break
+        
+    assert test, "Failed to find even number of faulty nodes for primal and dual graphs"
+    # With an even number of faulty nodes, we can now run the mwpm algorithm 
+    # and correct the -1 eigenvalues 
+    primal_correction_paths = mwpm(primal, distance, L, primal_faulty_nodes)
+    
+    # Construct pyquil program to carry out corrections 
+    primal_correct_pq = apply_operation(primal_correction_paths, primal, Z)
+    
+    # Run the correction program  
+    primal_correct_pq = address_qubits(primal_correct_pq)
+    return primal_correct_pq
 
 
 def operator_distance(G: nx.Graph, distance_G: nx.Graph, L: int, o1: Node,
