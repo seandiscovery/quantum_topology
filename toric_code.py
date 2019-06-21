@@ -168,7 +168,7 @@ def initialize_toric_code(primal: nx.Graph, dual: nx.Graph, distance: nx.Graph, 
     for t in range(trials):
         # Set up programs, and reset qubits if needed 
         primal_initial = Program() + RESET()
-        # Perform syndrome extraction on primal and dual graphs 
+        # Perform syndrome extraction on primal graph 
         primal_faulty_nodes = syndrome_extraction(primal, L, primal_initial, "X")
         test = (len(primal_faulty_nodes) % 2 == 0) 
         if test: 
@@ -181,9 +181,6 @@ def initialize_toric_code(primal: nx.Graph, dual: nx.Graph, distance: nx.Graph, 
     
     # Construct pyquil program to carry out corrections 
     primal_correct_pq = apply_operation(primal_correction_paths, primal, Z)
-    
-    # Run the correction program  
-    primal_correct_pq = address_qubits(primal_correct_pq)
     return primal_correct_pq
 
 
