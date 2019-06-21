@@ -202,6 +202,10 @@ def mwpm(G: nx.Graph, distance_G: nx.Graph, L: int, errors: List[Node]) -> List[
     '''
     mwpm_G = nx.Graph()
     mwpm_G.add_nodes_from(errors)
+    
+    # If an odd number of faulty nodes, add a non-faulty 
+    # node to complete the matching 
+    # Will this work? 
 
     paths = {}
     for o1 in errors:
